@@ -51,6 +51,19 @@ REJECTED_COLS = {"cnt_lag_2"}
 # What feature_columns() and the tests actually enforce.
 FORBIDDEN = LEAKAGE_COLS | TIME_INDEX_COLS | UNVERIFIED_COLS | REJECTED_COLS
 
+# --- Every other raw column, classified so a new one cannot slip in -----
+# feature_columns() is a denylist: an unforeseen numeric column would enter
+# the model silently (seeded fault 4: a copy of cnt named `rider_total`
+# gave ridge R^2 0.9999 with every test green). So every raw column must be
+# named somewhere; tests/test_contract.py fails on any that is not.
+RAW_FEATURE_COLS = {"temp", "atemp", "hum", "windspeed"}    # used as-is
+RAW_SOURCE_COLS = {"dteday", "holiday", "workday", "weather"}  # encoded in features.py
+RAW_UNUSED_COLS = {"season", "mnth", "weekday"}  # string labels; month_sin/cos, dayofweek replace them
+
+# sha256 of the checked-in data/raw/bike_daily.csv. Raw data is immutable;
+# `make data` and tests/test_contract.py both fail if the file changes.
+RAW_SHA256 = "a6bed1577f6e4de56dcfae6d8315985073cc0ad3446c8c99ed60c86a0b5ad9dc"
+
 # Temporal split: train on 2011, validate on H1 2012, test on H2 2012.
 TRAIN_END = "2011-12-31"
 VALID_END = "2012-06-30"

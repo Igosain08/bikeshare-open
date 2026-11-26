@@ -3,9 +3,17 @@ import pandas as pd
 import pytest
 from sklearn.metrics import r2_score
 
-from src.config import LAG_WARMUP, TARGET
+from src.config import (
+    FORBIDDEN,
+    LAG_WARMUP,
+    RAW_FEATURE_COLS,
+    RAW_SHA256,
+    RAW_SOURCE_COLS,
+    RAW_UNUSED_COLS,
+    TARGET,
+)
 from src.features import build_features, feature_columns, reindex_to_calendar
-from src.ingest import load_raw
+from src.ingest import load_raw, raw_sha256
 from src.train import MODELS, temporal_split
 
 
@@ -56,3 +64,21 @@ def test_persistence_baseline_is_reported():
     """The baseline that matters for a lag-driven model is 'yesterday again'.
     It must be in the comparison, whatever its score."""
     assert "baseline_persistence" in MODELS
+
+
+def test_every_raw_column_is_classified(raw):
+    """feature_columns() is a denylist, so a new numeric column in the raw
+    CSV would enter the model silently. Every raw column must be named in
+    src/config.py: forbidden (with a reason), a raw feature, a source that
+    features.py encodes, or explicitly unused."""
+    classified = FORBIDDEN | RAW_FEATURE_COLS | RAW_SOURCE_COLS | RAW_UNUSED_COLS
+    unclassified = set(raw.columns) - classified
+    assert not unclassified, (
+        f"raw columns not classified in src/config.py: {sorted(unclassified)}"
+    )
+
+
+def test_raw_data_is_unmodified():
+    """Raw data is immutable. The permission rules bind the agent's Edit and
+    Write tools, not every way a shell can write a file (seeded fault 4)."""
+    assert raw_sha256() == RAW_SHA256, "data/raw/bike_daily.csv has been modified"
