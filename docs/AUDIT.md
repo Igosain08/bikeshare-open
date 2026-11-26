@@ -138,7 +138,7 @@ Moved to validation and made to compare against `baseline_mean`. The final
 
 ## 4. `agent/audit.py`, final run on the finished repo
 
-`reports/audit.jsonl` (commit after `1d44436`) is this run: leakage `none`,
+`reports/audit.jsonl` (commit `03eabcd`) is this run: leakage `none`,
 `temporal_ok`, `baseline_reported` and `reproducible` all true, confidence
 high, two findings, both about baselines missing from written claims in
 docs/DECISIONS.md, not about the pipeline.
