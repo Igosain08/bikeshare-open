@@ -1,20 +1,71 @@
 # Audit (Exercise 3)
 
-## 1. Teammate's repository: PENDING
+## 1. Teammate's repository: https://github.com/aarshiagupta/bikeshare-open
 
-No teammate repository was available when this was written, so this section
-is intentionally empty rather than invented. To complete it:
+Audited at their commit `78f612d` (the latest when I cloned it). Before
+running anything I read their `.claude/settings.json`, hook, Makefile and
+their `src/` and `tests/` diff, since running an agent in someone else's repo
+runs their hooks and code. Everything matched the starter apart from
+ordinary pipeline changes. With the pinned `requirements.txt` (the same as
+mine), `make all` reproduces their committed `reports/metrics.json` exactly
+and `make test` gives 19 passed.
 
-    git clone <teammate-repo-url> ../teammate-repo
-    cd ../teammate-repo && claude
-    # inside Claude Code:
-    > Use the leakage-auditor subagent to review this repo's diff from its
-      first commit: git diff $(git rev-list --max-parents=0 HEAD)..HEAD -- src/ tests/
+I ran `/leakage-auditor` in a fresh headless Claude Code session (Claude
+Opus 5.5) inside their repo, on the diff from their unmodified-starter
+commit. Prompt: *"Use the leakage-auditor subagent to review this
+repository's diff from its unmodified starter commit to HEAD: git diff
+5a3fefe..HEAD -- src/ tests/ ... print the subagent's report back to me
+VERBATIM."* Report, verbatim (absolute paths shortened to repo-relative):
 
-Paste the report verbatim below, then write a one-paragraph verdict on which
-findings change a number, separate from the auditor's own words.
+> All five checks pass on `git diff 5a3fefe..HEAD -- src/ tests/`. I ran the pipeline and all 19 tests pass, the outputs exactly match the committed `reports/metrics.json`, and I found nothing that changes a number or invalidates a conclusion.
+>
+> 1. **Target leakage:** none. The new `cnt_roll_3` (`src/features.py:79`) only uses days before the current one. The four target transforms in `src/train.py:71-76` only use `cnt_lag_1` and `cnt_roll_7`, which are both past values. I confirmed `casual + registered == cnt` on every row, and neither column is among the 15 features.
+> 2. **Temporal ordering:** correct. The split is by date (348 train / 182 validation / 184 test rows). The scaler sits inside the pipeline, and it and the mean baseline are fit on training rows only. The transforms are fit on training rows only as well. Exercise 4 scores only the validation set unless `--final` is passed.
+> 3. **Calendar gaps:** handled. The data is reindexed to a full calendar before any lag is built. In the final table, consecutive dates are always one day apart except one 9-day jump. That jump is the missing 2011-03-10 plus the 7 rows dropped after it.
+> 4. **Silent row loss:** bounded. Of the 728 raw rows, 14 are lost: 7 for the lag warm-up and 7 after the missing day. That exactly equals the limit the test allows. The 3-day window of `cnt_roll_3` stays inside that limit, and unknown weather labels raise an error instead of being dropped.
+> 5. **Baselines:** both are reported next to every model score, including in the target-transform runs. The persistence comparison is not flattering, and `REPORT.md` states it honestly: on test, ridge has a higher R^2 (0.58 vs 0.5099) but a worse MAE than persistence (946.2 vs 840.1).
 
-## 2. `/leakage-auditor` on my own diff (self-audit, not a substitute for section 1)
+### My verdict
+
+I agree with all five of the auditor's passes. None of its points change a
+number, and I checked the main ones myself: the metrics reproduce, their
+`cnt_roll_3` test uses a hand-computed value from strictly earlier days, and
+14 rows are dropped, which is exactly the bound. The finding that does
+change a conclusion is one the auditor couldn't see, because it only
+reviewed `src/` and `tests/`. It's in their `REPORT.md`, Exercise 5. They
+say ridge's R² edge comes from "32 days when demand swung by more than 1,500
+rides from the day before", where ridge's MAE is 1,502 against
+persistence's 2,413, and they recommend "persistence with a ridge-based
+alarm for weather-driven swings". But |cnt - cnt_lag_1| > 1500 is
+persistence's own error, so those days are chosen using the answer and
+can't be known in advance. That makes them fine as an accounting of where
+the R² gap comes from, but not as evidence for an alarm. I made the same
+mistake in my own repo (section 2, finding 1). Rerunning their pipeline on
+days you could flag ahead of time gives:
+
+```
+all                                                                      n=184  ridge MAE   946.2  persistence MAE   840.1
+their slice |cnt-cnt_lag_1|>1500 (= persistence error, outcome-selected) n= 32  ridge MAE  1502.1  persistence MAE  2413.2
+ex-ante: weather category changed                                        n= 67  ridge MAE  1042.2  persistence MAE  1141.2
+ex-ante: workday status changed                                          n= 59  ridge MAE   994.0  persistence MAE  1027.3
+ex-ante: neither changed                                                 n= 81  ridge MAE   868.9  persistence MAE   582.2
+slice identical to persistence error > 1500: True
+```
+
+On days when the weather category changed, which is what their alarm would
+fire on, ridge still wins, but by 99 rides of MAE (1042 vs 1141), not 911.
+On days when nothing changed it loses by 287. So their verdict (keep
+persistence, don't swap in ridge) holds, and the alarm idea has some real
+support, but the effect is about a ninth of what their slice suggests. I'd
+suggest they report the weather-changed slice instead. Smaller points that
+don't change any number: their `test_beats_the_mean_baseline` still checks
+test-set R² on every `make test` (the starter's version; I moved mine to
+validation after my own audit), and `test_no_feature_reconstructs_the_target`
+only checks exact sums of two features, so a rescaled sum like
+`0.5 * (casual + registered)` would get past its pair check. Their
+correlation check would still catch it, because it's a near-copy of `cnt`.
+
+## 2. `/leakage-auditor` on my own diff (self-audit)
 
 Run 2026-11-25 in a fresh headless Claude Code session inside this repo
 (Claude Opus 5.5), so the project's subagent definition
