@@ -82,3 +82,48 @@ Secondary guess `test_only_expected_rows_are_dropped` stayed green: the row-drop
 count does not distinguish a shifted from an unshifted 7-day window.
 
 Restore: NOT restored (`--keep`); the fault is left in place for a timed fix.
+
+### Seeded: remove the raise ValueError from encode_weather in src/features.py, so unknown weather labels silently become NaN --keep
+
+Claim attacked: an unknown weather label fails loudly; it is never silently
+mapped to NaN (and later dropped). Predicted before the edit: no test goes red,
+because no file under `tests/` references `weather`, `encode_weather` or `ValueError`.
+
+`git diff`:
+
+```
+diff --git a/src/features.py b/src/features.py
+index 02e93ca..7dcfdb8 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -26,8 +26,6 @@ def encode_weather(series: pd.Series) -> pd.Series:
+     """
+     known = series.dropna()
+     unknown = set(known.unique()) - set(WEATHER_ORDER)
+-    if unknown:
+-        raise ValueError(f"unmapped weather labels: {sorted(unknown)}")
+     return series.map(WEATHER_ORDER).astype(float)
+ 
+ 
+```
+
+Hook stderr:
+
+```
+hook stayed silent
+```
+
+`make test 2>&1 | tail -15`:
+
+```
+python -m pytest tests/ -q
+................                                                         [100%]
+16 passed in 1.34s
+```
+
+**SUITE STAYED GREEN.** Prediction held. Missing test: nothing asserts that
+`encode_weather` raises on an unseen label (e.g. `pytest.raises(ValueError)` on
+`pd.Series(["GOOD", "SNOW"])`). The real CSV only contains GOOD/MISTY/BAD, so
+neither the pipeline nor the suite exercises this path.
+
+Restore: NOT restored (`--keep`); the fault is left in place for a timed fix.
