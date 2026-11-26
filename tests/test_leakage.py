@@ -43,6 +43,18 @@ def test_lags_are_true_calendar_lags(feats):
     assert checked > 600, "too few rows actually verified"
 
 
+def test_lag_2_is_two_calendar_days_back(feats):
+    """cnt_lag_2 for date d must equal cnt on d-2, in calendar days.
+
+    2011-03-18 is the first row to survive dropna() after the missing
+    2011-03-10. Its two-day lag is 2011-03-16: data/raw/bike_daily.csv
+    line 73 (instant=75), cnt = 2192, hand-copied, not recomputed.
+    """
+    assert "cnt_lag_2" in feats.columns, "cnt_lag_2 not built by build_features"
+    row = feats.set_index("dteday").loc[pd.Timestamp("2011-03-18")]
+    assert row.cnt_lag_2 == 2192
+
+
 def test_lag_is_not_the_target(feats):
     assert not (feats.cnt_lag_1 == feats[TARGET]).all()
 
