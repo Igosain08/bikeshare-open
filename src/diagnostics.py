@@ -45,15 +45,32 @@ def diagnostics() -> dict:
 
     # 3. Ridge vs persistence (and the Exercise 4 model) on test, sliced.
     hgb_ratio = RelativeTarget(MODELS["hgb"], **TRANSFORMS["ratio_roll7"]).fit(train[cols], train[TARGET])
-    preds = {"persistence": test.cnt_lag_1.to_numpy(dtype=float),
+    preds = {"mean": np.full(len(test), float(train[TARGET].mean())),
+             "persistence": test.cnt_lag_1.to_numpy(dtype=float),
              "ridge": ridge.predict(test[cols]),
              "hgb_ratio_roll7": hgb_ratio.predict(test[cols])}
     y = test[TARGET].to_numpy(dtype=float)
     no_sandy = ~test.dteday.between(SANDY - pd.Timedelta(days=1), SANDY + pd.Timedelta(days=2)).to_numpy()
+    # Previous calendar day from the full frame, so the first test day is
+    # compared with the last validation day (leakage-auditor finding 2).
+    by_date = df.set_index("dteday")
+
+    def changed(col):
+        prev = by_date[col].shift(1).reindex(test.dteday).to_numpy()
+        return test[col].to_numpy() != prev
+
+    # OUTCOME-SELECTED: |cnt - cnt_lag_1| is persistence's own error, so this
+    # slice is chosen with today's count and cannot be known in advance
+    # (leakage-auditor finding 1). Reported with its complement, never alone.
     big_move = (np.abs(test[TARGET] - test.cnt_lag_1) > 1000).to_numpy()
-    wkday_switch = (test.is_workday != test.is_workday.shift(1)).to_numpy()
     slices = {"all": np.ones(len(test), bool), "excl_sandy_4d": no_sandy,
-              "big_day_to_day_move_gt1000": big_move, "workday_status_changed": wkday_switch}
+              # known in advance (calendar, weather forecast):
+              "exante_workday_status_changed": changed("is_workday"),
+              "exante_weather_changed": changed("weather_severity"),
+              "exante_neither_changed": ~changed("is_workday") & ~changed("weather_severity"),
+              # outcome-selected, for illustration only:
+              "OUTCOME_SELECTED_persistence_err_gt1000": big_move,
+              "OUTCOME_SELECTED_persistence_err_le1000": ~big_move}
     out["test_slices"] = {
         s: {"n": int(m.sum()), **{k: _err(y[m], p[m]) for k, p in preds.items()}}
         for s, m in slices.items()
@@ -65,7 +82,8 @@ def diagnostics() -> dict:
     # 4. Exercise 4 stability: validation halves (Q1, Q2 2012) and by month on test.
     halves = {"valid_Q1": valid[valid.dteday < "2012-04-01"], "valid_Q2": valid[valid.dteday >= "2012-04-01"]}
     out["valid_halves_r2"] = {
-        h: {"ridge": round(float(r2_score(p[TARGET], ridge.predict(p[cols]))), 4),
+        h: {"mean": round(float(r2_score(p[TARGET], np.full(len(p), float(train[TARGET].mean())))), 4),
+            "ridge": round(float(r2_score(p[TARGET], ridge.predict(p[cols]))), 4),
             "hgb_ratio_roll7": round(float(r2_score(p[TARGET], hgb_ratio.predict(p[cols]))), 4),
             "persistence": round(float(r2_score(p[TARGET], p.cnt_lag_1)), 4)}
         for h, p in halves.items()
