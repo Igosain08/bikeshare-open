@@ -146,6 +146,12 @@ def score_transforms(final: str | None = None) -> dict:
     splits = [("valid", valid)] + ([("test", test)] if final else [])
     names = [final] if final else list(TRANSFORMS)
     out = {"splits": [s for s, _ in splits]}
+    # Baselines beside every score (audit finding, 2026-11-25).
+    for b in ("baseline_mean", "baseline_persistence"):
+        est = MODELS[b].fit(train[cols], train[TARGET])
+        out[b] = {s: {"r2": round(float(r2_score(p[TARGET], pred := est.predict(p[cols]))), 4),
+                      "mae": round(float(mean_absolute_error(p[TARGET], pred)), 1)}
+                  for s, p in splits}
     for t in ["none"] + names:
         for m in ("ridge", "hgb"):
             est = MODELS[m] if t == "none" else RelativeTarget(MODELS[m], **TRANSFORMS[t])

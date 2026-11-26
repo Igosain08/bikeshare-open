@@ -2,6 +2,18 @@
   "splits": [
     "valid"
   ],
+  "baseline_mean": {
+    "valid": {
+      "r2": -0.9318,
+      "mae": 2002.2
+    }
+  },
+  "baseline_persistence": {
+    "valid": {
+      "r2": 0.4507,
+      "mae": 900.6
+    }
+  },
   "ridge/none": {
     "valid": {
       "r2": 0.6475,
