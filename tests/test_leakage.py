@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from src.config import FORBIDDEN, TARGET
-from src.features import build_features, feature_columns
+from src.features import build_features, encode_weather, feature_columns
 from src.ingest import load_raw
 
 
@@ -65,6 +65,18 @@ def test_lag_2_is_true_calendar_lag_everywhere(feats):
             assert lag == pytest.approx(by_date[prev]), f"bad lag_2 at {date.date()}"
             checked += 1
     assert checked > 600, "too few rows actually verified"
+
+
+@pytest.mark.parametrize("labels", [
+    ["GOOD", "SNOW"],      # a label this mirror does not use
+    [1, 2, 3],             # UCI's numeric codes: the original silent-NaN bug
+])
+def test_encode_weather_rejects_unknown_labels(labels):
+    """The real CSV only has GOOD/MISTY/BAD, so nothing else exercises this
+    guard: seeded fault 3 (deleting the raise) left the whole suite green.
+    Lives in this file so the PostToolUse hook runs it."""
+    with pytest.raises(ValueError, match="unmapped weather labels"):
+        encode_weather(pd.Series(labels))
 
 
 def test_lag_is_not_the_target(feats):
