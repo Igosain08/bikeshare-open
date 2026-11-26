@@ -1,0 +1,131 @@
+{
+  "cnt_range": {
+    "train": [
+      431,
+      6043,
+      3493.5
+    ],
+    "valid": [
+      1027,
+      8362,
+      5152.1
+    ],
+    "test": [
+      22,
+      8714,
+      6042.9
+    ]
+  },
+  "share_above_train_max": {
+    "valid": 0.39,
+    "test": 0.565
+  },
+  "ridge_coef_per_sd": {
+    "cnt_roll_7": 566.9,
+    "cnt_lag_1": 361.6,
+    "weather_severity": -279.9,
+    "temp": 200.0,
+    "windspeed": -156.0,
+    "hum": -117.3,
+    "is_holiday": -62.6,
+    "atemp": 46.2,
+    "cnt_lag_7": -41.0,
+    "month_sin": -28.5,
+    "is_workday": 27.7,
+    "month_cos": -14.4,
+    "dayofweek": -6.8,
+    "is_weekend": -5.3
+  },
+  "test_slices": {
+    "all": {
+      "n": 184,
+      "persistence": {
+        "r2": 0.5099,
+        "mae": 840.1,
+        "bias": 16.1
+      },
+      "ridge": {
+        "r2": 0.5833,
+        "mae": 947.1,
+        "bias": -555.3
+      },
+      "hgb_ratio_roll7": {
+        "r2": 0.6416,
+        "mae": 810.1,
+        "bias": -282.9
+      }
+    },
+    "excl_sandy_4d": {
+      "n": 180,
+      "persistence": {
+        "r2": 0.5519,
+        "mae": 784.4,
+        "bias": 3.7
+      },
+      "ridge": {
+        "r2": 0.5837,
+        "mae": 915.2,
+        "bias": -593.6
+      },
+      "hgb_ratio_roll7": {
+        "r2": 0.643,
+        "mae": 780.2,
+        "bias": -320.5
+      }
+    },
+    "big_day_to_day_move_gt1000": {
+      "n": 52,
+      "persistence": {
+        "r2": -0.1969,
+        "mae": 1976.8,
+        "bias": 193.4
+      },
+      "ridge": {
+        "r2": 0.4467,
+        "mae": 1218.8,
+        "bias": -157.7
+      },
+      "hgb_ratio_roll7": {
+        "r2": 0.54,
+        "mae": 1057.3,
+        "bias": 125.3
+      }
+    },
+    "workday_status_changed": {
+      "n": 60,
+      "persistence": {
+        "r2": 0.6111,
+        "mae": 1012.7,
+        "bias": 8.4
+      },
+      "ridge": {
+        "r2": 0.6531,
+        "mae": 1005.4,
+        "bias": -457.7
+      },
+      "hgb_ratio_roll7": {
+        "r2": 0.6626,
+        "mae": 929.0,
+        "bias": -271.4
+      }
+    }
+  },
+  "ridge_beats_persistence_share_of_days": 0.386,
+  "median_abs_error": {
+    "persistence": 506.5,
+    "ridge": 904.1,
+    "hgb_ratio_roll7": 634.3
+  },
+  "valid_halves_r2": {
+    "valid_Q1": {
+      "ridge": 0.5624,
+      "hgb_ratio_roll7": 0.5821,
+      "persistence": 0.2844
+    },
+    "valid_Q2": {
+      "ridge": 0.0934,
+      "hgb_ratio_roll7": 0.4877,
+      "persistence": -0.3655
+    }
+  }
+}
