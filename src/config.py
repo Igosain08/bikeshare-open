@@ -42,8 +42,14 @@ TIME_INDEX_COLS = {"instant", "yr", "days_since_2011"}
 #    build our own lags from the target and test those instead.
 UNVERIFIED_COLS = {"cnt_2d_bfr"}
 
+# 4. Rejected: built and tested, but did not earn a place in the model.
+#    cnt_lag_2 (ours, calendar-aligned, tested) moved ridge validation R^2
+#    by -0.0022, inside the 0.01 noise floor. Kept in the table so the
+#    test keeps guarding its alignment; kept out of the model.
+REJECTED_COLS = {"cnt_lag_2"}
+
 # What feature_columns() and the tests actually enforce.
-FORBIDDEN = LEAKAGE_COLS | TIME_INDEX_COLS | UNVERIFIED_COLS
+FORBIDDEN = LEAKAGE_COLS | TIME_INDEX_COLS | UNVERIFIED_COLS | REJECTED_COLS
 
 # Temporal split: train on 2011, validate on H1 2012, test on H2 2012.
 TRAIN_END = "2011-12-31"
