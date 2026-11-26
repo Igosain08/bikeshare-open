@@ -1,0 +1,62 @@
+{
+  "splits": [
+    "valid"
+  ],
+  "ridge/none": {
+    "valid": {
+      "r2": 0.6475,
+      "mae": 832.9,
+      "max_pred": 7092.0
+    }
+  },
+  "hgb/none": {
+    "valid": {
+      "r2": 0.2185,
+      "mae": 1296.6,
+      "max_pred": 5541.0
+    }
+  },
+  "ridge/ratio_roll7": {
+    "valid": {
+      "r2": 0.3881,
+      "mae": 1092.9,
+      "max_pred": 6808.0
+    }
+  },
+  "hgb/ratio_roll7": {
+    "valid": {
+      "r2": 0.7454,
+      "mae": 687.2,
+      "max_pred": 8222.0
+    }
+  },
+  "ridge/diff_lag1": {
+    "valid": {
+      "r2": 0.6475,
+      "mae": 832.4,
+      "max_pred": 7099.0
+    }
+  },
+  "hgb/diff_lag1": {
+    "valid": {
+      "r2": 0.6079,
+      "mae": 834.3,
+      "max_pred": 8307.0
+    }
+  },
+  "ridge/log": {
+    "valid": {
+      "r2": 0.1042,
+      "mae": 1180.8,
+      "max_pred": 12037.0
+    }
+  },
+  "hgb/log": {
+    "valid": {
+      "r2": 0.1352,
+      "mae": 1363.6,
+      "max_pred": 5556.0
+    }
+  },
+  "train_max_cnt": 6043
+}

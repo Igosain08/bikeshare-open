@@ -15,10 +15,12 @@ reason it fails is the headline result.
 
 Run: python -m src.train
 """
+import argparse
 import json
 
+import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
@@ -43,6 +45,51 @@ class PersistenceBaseline(BaseEstimator, RegressorMixin):
 
     def predict(self, X):
         return X[self.column].to_numpy(dtype=float)
+
+
+class RelativeTarget(BaseEstimator, RegressorMixin):
+    """Exercise 4: fit `model` on a transformed target, predict back in rides.
+
+    kind="ratio": z = cnt / ref   ->  cnt_hat = z_hat * ref
+    kind="diff":  z = cnt - ref   ->  cnt_hat = z_hat + ref
+    kind="log":   z = log1p(cnt)  ->  cnt_hat = expm1(z_hat)   (control: rescales,
+                  but a tree is still capped at the 2011 maximum)
+
+    `ref` is a lagged column (known at prediction time), so the transform
+    uses no information from day d. Not used by `make all`.
+    """
+
+    def __init__(self, model=None, kind: str = "ratio", ref: str = "cnt_roll_7"):
+        self.model = model
+        self.kind = kind
+        self.ref = ref
+
+    def _fwd(self, X, y):
+        y = np.asarray(y, dtype=float)
+        if self.kind == "log":
+            return np.log1p(y)
+        r = X[self.ref].to_numpy(dtype=float)
+        return y / r if self.kind == "ratio" else y - r
+
+    def _inv(self, X, z):
+        if self.kind == "log":
+            return np.expm1(z)
+        r = X[self.ref].to_numpy(dtype=float)
+        return z * r if self.kind == "ratio" else z + r
+
+    def fit(self, X, y):
+        self.model_ = clone(self.model).fit(X, self._fwd(X, y))
+        return self
+
+    def predict(self, X):
+        return self._inv(X, self.model_.predict(X))
+
+
+TRANSFORMS = {
+    "ratio_roll7": dict(kind="ratio", ref="cnt_roll_7"),
+    "diff_lag1": dict(kind="diff", ref="cnt_lag_1"),
+    "log": dict(kind="log"),
+}
 
 
 MODELS = {
@@ -86,8 +133,48 @@ def fit_and_score() -> dict:
     return results
 
 
+def score_transforms(final: str | None = None) -> dict:
+    """Exercise 4. Ridge and hgb under each target transform in TRANSFORMS.
+
+    Validation only, unless `final` names the one transform chosen on
+    validation: then that transform (and the untransformed models, for the
+    comparison) are scored on test as well. Run that once, at the end.
+    """
+    df = pd.read_parquet(PROCESSED)
+    cols = feature_columns(df)
+    train, valid, test = temporal_split(df)
+    splits = [("valid", valid)] + ([("test", test)] if final else [])
+    names = [final] if final else list(TRANSFORMS)
+    out = {"splits": [s for s, _ in splits]}
+    for t in ["none"] + names:
+        for m in ("ridge", "hgb"):
+            est = MODELS[m] if t == "none" else RelativeTarget(MODELS[m], **TRANSFORMS[t])
+            est.fit(train[cols], train[TARGET])
+            out[f"{m}/{t}"] = {
+                s: {"r2": round(float(r2_score(p[TARGET], pred := est.predict(p[cols]))), 4),
+                    "mae": round(float(mean_absolute_error(p[TARGET], pred)), 1),
+                    "max_pred": round(float(pred.max()), 0)}
+                for s, p in splits
+            }
+    out["train_max_cnt"] = int(train[TARGET].max())
+    return out
+
+
 if __name__ == "__main__":
-    res = fit_and_score()
-    METRICS.parent.mkdir(parents=True, exist_ok=True)
-    METRICS.write_text(json.dumps(res, indent=2))
-    print(json.dumps({k: v for k, v in res.items() if k != "features"}, indent=2))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--target-transform", action="store_true",
+                    help="Exercise 4: compare target transforms on validation; does not touch metrics.json")
+    ap.add_argument("--final", choices=list(TRANSFORMS),
+                    help="with --target-transform: score this one transform on test too (once)")
+    ns = ap.parse_args()
+    if ns.target_transform:
+        res = score_transforms(ns.final)
+        path = METRICS.parent / ("exercise4_test.json" if ns.final else "exercise4_valid.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(res, indent=2))
+        print(json.dumps(res, indent=2))
+    else:
+        res = fit_and_score()
+        METRICS.parent.mkdir(parents=True, exist_ok=True)
+        METRICS.write_text(json.dumps(res, indent=2))
+        print(json.dumps({k: v for k, v in res.items() if k != "features"}, indent=2))

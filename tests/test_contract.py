@@ -14,7 +14,7 @@ from src.config import (
 )
 from src.features import build_features, feature_columns, reindex_to_calendar
 from src.ingest import load_raw, raw_sha256
-from src.train import MODELS, temporal_split
+from src.train import MODELS, TRANSFORMS, RelativeTarget, temporal_split
 
 
 @pytest.fixture(scope="module")
@@ -82,3 +82,11 @@ def test_raw_data_is_unmodified():
     """Raw data is immutable. The permission rules bind the agent's Edit and
     Write tools, not every way a shell can write a file (seeded fault 4)."""
     assert raw_sha256() == RAW_SHA256, "data/raw/bike_daily.csv has been modified"
+
+
+@pytest.mark.parametrize("name", sorted(TRANSFORMS))
+def test_target_transforms_round_trip(feats, name):
+    """Exercise 4's wrapper must invert exactly, or its scores mean nothing."""
+    est = RelativeTarget(None, **TRANSFORMS[name])
+    y = feats[TARGET].to_numpy(dtype=float)
+    assert est._inv(feats, est._fwd(feats, y)) == pytest.approx(y)
