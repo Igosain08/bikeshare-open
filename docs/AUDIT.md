@@ -135,3 +135,18 @@ Fixed: score_transforms now writes both baselines. (2) The starter's
 `make test` and never compared to the mean baseline it is named after.
 Moved to validation and made to compare against `baseline_mean`. The final
 `reports/audit.jsonl` is a re-run on the finished repo; see section 4.
+
+## 4. `agent/audit.py`, final run on the finished repo
+
+`reports/audit.jsonl` (commit after `1d44436`) is this run: leakage `none`,
+`temporal_ok`, `baseline_reported` and `reproducible` all true, confidence
+high, two findings, both about baselines missing from written claims in
+docs/DECISIONS.md, not about the pipeline.
+
+- Line 17 (my Exercise 4 line quoted 0.6416 / 810.1 with no baselines):
+  correct, fixed; the line now carries persistence and mean, and says the
+  MAE gain over persistence is 30 rides/day.
+- Line 6 (starter line, "leaky 1.000 -> honest ridge 0.583" with no
+  baseline): correct as an observation, not changed, because the assignment
+  requires the five starter lines kept as shipped; the starter's own line 10
+  gives persistence, and REPORT.md states every score beside both baselines.
