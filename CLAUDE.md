@@ -8,7 +8,10 @@ rides) from calendar, weather, and lagged-demand features.
 - `make features` - build `data/processed/features.parquet`
 - `make train` - fit models, write `reports/metrics.json`
 - `make test` - pytest; run this before claiming anything works
-- `make all` - the three pipeline stages in order
+- `make all` - the three pipeline stages in order; reproduces `reports/metrics.json`
+- `python -m src.train --target-transform` - Exercise 4, validation only; never
+  add `--final` while iterating (it scores test)
+- `python -m src.diagnostics` - reads test; only after choices are frozen
 
 ## Non-negotiable rules
 - **Never** put `casual` or `registered` in a feature set:
@@ -20,9 +23,19 @@ rides) from calendar, weather, and lagged-demand features.
 - Any new lag or rolling feature must be built on a gap-free calendar
   index (`src.features.reindex_to_calendar`) and must `.shift(1)` before
   it aggregates. Add a test for it in `tests/test_leakage.py`.
+- A feature stays only if ridge VALIDATION R^2 rises >= 0.01. A rejected
+  feature goes in `REJECTED_COLS` (e.g. `cnt_lag_2`), not deleted.
+- Every raw CSV column must be classified in `src/config.py`
+  (`FORBIDDEN` or `RAW_*_COLS`); `test_every_raw_column_is_classified` fails otherwise.
+- `data/raw/` is immutable and hash-checked (`RAW_SHA256`); never write to it,
+  from any tool, including `python -c` or shell redirects.
 - Report the mean baseline **and** the persistence baseline (yesterday's
   count) alongside every model. A negative R^2 is a finding, not a bug
   to hide.
+
+## Skills
+- `/new-feature <name>` - add a feature, failing test first.
+- `/seed-fault <description> [--keep]` - break one thing, record red output, restore.
 
 ## Style
 - Standard library, pandas, scikit-learn only. No new dependencies
