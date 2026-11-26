@@ -127,3 +127,81 @@ python -m pytest tests/ -q
 neither the pipeline nor the suite exercises this path.
 
 Restore: NOT restored (`--keep`); the fault is left in place for a timed fix.
+
+### Seeded: remove the raise ValueError from encode_weather in src/features.py again, now that test_encode_weather_rejects_unknown_labels exists (re-run of fault 3)
+
+Claim attacked: an unknown weather label fails loudly instead of silently
+becoming NaN.
+
+Prediction (written before the edit): both parametrized cases of
+`tests/test_leakage.py::test_encode_weather_rejects_unknown_labels` fail with
+`DID NOT RAISE` (2 failed, 16 passed); the PostToolUse hook also fails, since
+the test lives in `test_leakage.py`.
+
+`git diff`:
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index 5576891..7dcfdb8 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -26,8 +26,6 @@ def encode_weather(series: pd.Series) -> pd.Series:
+     """
+     known = series.dropna()
+     unknown = set(known.unique()) - set(WEATHER_ORDER)
+-    if unknown:
+-        raise ValueError(f"unmapped weather labels: {sorted(map(str, unknown))}")
+     return series.map(WEATHER_ORDER).astype(float)
+ 
+ 
+```
+
+Hook stderr:
+
+```
+[${CLAUDE_PROJECT_DIR}/.claude/hooks/check_leakage.sh]: Leakage tests failed after editing /Users/ishaangosain/Desktop/dsc-180-MA-all/DSC180A-Methodology-6/bikeshare-open/src/features.py:
+
+labels = [1, 2, 3]
+
+    @pytest.mark.parametrize("labels", [
+        ["GOOD", "SNOW"],      # a label this mirror does not use
+        [1, 2, 3],             # UCI's numeric codes: the original silent-NaN bug
+    ])
+    def test_encode_weather_rejects_unknown_labels(labels):
+        """The real CSV only has GOOD/MISTY/BAD, so nothing else exercises this
+        guard: seeded fault 3 (deleting the raise) left the whole suite green.
+        Lives in this file so the PostToolUse hook runs it."""
+>       with pytest.raises(ValueError, match="unmapped weather labels"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_leakage.py:78: Failed
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels0]
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels1]
+2 failed, 9 passed in 0.50s
+```
+
+`make test 2>&1 | tail -15`:
+
+```
+    ])
+    def test_encode_weather_rejects_unknown_labels(labels):
+        """The real CSV only has GOOD/MISTY/BAD, so nothing else exercises this
+        guard: seeded fault 3 (deleting the raise) left the whole suite green.
+        Lives in this file so the PostToolUse hook runs it."""
+>       with pytest.raises(ValueError, match="unmapped weather labels"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_leakage.py:78: Failed
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels0]
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels1]
+2 failed, 16 passed in 1.36s
+make: *** [test] Error 1
+```
+
+Prediction held: exactly the predicted test failed (both parametrizations),
+and the hook caught it at edit time. The gap found by the first run of
+fault 3 is closed.
