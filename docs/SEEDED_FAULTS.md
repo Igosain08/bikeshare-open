@@ -17,6 +17,190 @@ the end of this file. Absolute paths are shortened to repo-relative ones.
 | 3 | `raise` removed from `encode_weather` | **nothing** (suite green) until I added `test_encode_weather_rejects_unknown_labels` | silent, then exit 2 | 6 |
 | 4 | raw CSV overwritten from Bash | **nothing** (suite green, ridge R^2 0.9999) until the hash / classification / identity tests | never fires | n/a |
 
+## Re-run against the final suite (24 tests)
+
+The sections below were recorded while the suite was growing (16 to 21
+tests), so their pass counts are from that time. To make the pasted output
+match what the tests print now, I re-seeded all four faults on the final
+code (`fb71f89`) in a scratch clone, ran the real hook script with a
+PostToolUse payload on stdin, ran `make test`, and reverted. Nothing here
+was committed. Fault 1 now fails two tests, the name check and the
+value-based identity check, so the suite has two independent catches for it.
+
+### Fault 1: `"casual"` appended in `feature_columns`
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index 5576891..1abb8eb 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -82,7 +82,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
+ def feature_columns(df: pd.DataFrame) -> list[str]:
+     """Numeric columns that are safe to feed the model."""
+     numeric = df.select_dtypes(include="number").columns
+-    return [c for c in numeric if c not in FORBIDDEN]
++    return [c for c in numeric if c not in FORBIDDEN] + ["casual"]
+ 
+ 
+ if __name__ == "__main__":
+```
+
+Hook (exit 2), stderr:
+
+```
+Leakage tests failed after editing src/features.py:
+        cols = feature_columns(feats)
+        hits = []
+        for target in ("cnt", "casual", "registered"):
+            y = feats[target].to_numpy(dtype=float)
+            for r in (1, 2):
+                for subset in combinations(cols, r):
+                    X = np.column_stack([feats[list(subset)].to_numpy(dtype=float),
+                                         np.ones(len(feats))])
+                    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+                    if np.abs(X @ coef - y).max() < 1e-6:
+                        hits.append((target, subset))
+>       assert not hits, f"features that exactly restate a leaked column: {hits}"
+E       AssertionError: features that exactly restate a leaked column: [('casual', ('casual',)), ('casual', ('temp', 'casual')), ('casual', ('atemp', 'casual')), ('casual', ('hum', 'casual')), ('casual', ('windspeed', 'casual')), ('casual', ('dayofweek', 'casual')), ('casual', ('is_weekend', 'casual')), ('casual', ('is_holiday', 'casual')), ('casual', ('is_workday', 'casual')), ('casual', ('month_sin', 'casual')), ('casual', ('month_cos', 'casual')), ('casual', ('weather_severity', 'casual')), ('casual', ('cnt_lag_1', 'casual')), ('casual', ('cnt_lag_7', 'casual')), ('casual', ('cnt_roll_7', 'casual'))]
+E       assert not [('casual', ('casual',)), ('casual', ('temp', 'casual')), ('casual', ('atemp', 'casual')), ('casual', ('hum', 'casual')), ('casual', ('windspeed', 'casual')), ('casual', ('dayofweek', 'casual')), ...]
+
+tests/test_leakage.py:54: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_no_forbidden_features - AssertionError: fo...
+FAILED tests/test_leakage.py::test_no_feature_restates_the_target - Assertion...
+2 failed, 10 passed in 0.36s
+```
+
+`make test`:
+
+```
+tests/test_leakage.py:54: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_no_forbidden_features - AssertionError: fo...
+FAILED tests/test_leakage.py::test_no_feature_restates_the_target - Assertion...
+2 failed, 22 passed in 1.22s
+make: *** [test] Error 1
+```
+
+### Fault 2: `.shift(1)` deleted from `cnt_roll_7`
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index 5576891..9c5a5a1 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -74,7 +74,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
+     out["cnt_lag_1"] = out[TARGET].shift(1)
+     out["cnt_lag_2"] = out[TARGET].shift(2)
+     out["cnt_lag_7"] = out[TARGET].shift(LAG_WARMUP)
+-    out["cnt_roll_7"] = out[TARGET].shift(1).rolling(LAG_WARMUP).mean()
++    out["cnt_roll_7"] = out[TARGET].rolling(LAG_WARMUP).mean()
+ 
+     return out.dropna().reset_index(drop=True)
+```
+
+Hook (exit 2), stderr:
+
+```
+Leakage tests failed after editing src/features.py:
+[714 rows x 29 columns]
+
+    def test_rolling_mean_excludes_today(feats):
+        """cnt_roll_7 must be the mean of the 7 calendar days *before* today."""
+        by_date = feats.set_index("dteday")[TARGET]
+        date = feats.dteday.iloc[200]
+        window = [date - pd.Timedelta(days=k) for k in range(1, 8)]
+        if all(d in by_date.index for d in window):
+            expected = sum(by_date[d] for d in window) / 7
+>           assert feats.set_index("dteday").cnt_roll_7[date] == pytest.approx(expected)
+E           assert np.float64(4389.0) == 4414.857142857143 ± 0.00441486
+E             
+E             comparison failed
+E             Obtained: 4389.0
+E             Expected: 4414.857142857143 ± 0.00441486
+
+tests/test_leakage.py:116: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_rolling_mean_excludes_today - assert np.fl...
+1 failed, 11 passed in 0.34s
+```
+
+`make test`:
+
+```
+tests/test_leakage.py:116: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_rolling_mean_excludes_today - assert np.fl...
+1 failed, 23 passed in 1.19s
+make: *** [test] Error 1
+```
+
+### Fault 3: `raise` removed from `encode_weather`
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index 5576891..7dcfdb8 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -26,8 +26,6 @@ def encode_weather(series: pd.Series) -> pd.Series:
+     """
+     known = series.dropna()
+     unknown = set(known.unique()) - set(WEATHER_ORDER)
+-    if unknown:
+-        raise ValueError(f"unmapped weather labels: {sorted(map(str, unknown))}")
+     return series.map(WEATHER_ORDER).astype(float)
+```
+
+Hook (exit 2), stderr:
+
+```
+Leakage tests failed after editing src/features.py:
+
+labels = [1, 2, 3]
+
+    @pytest.mark.parametrize("labels", [
+        ["GOOD", "SNOW"],      # a label this mirror does not use
+        [1, 2, 3],             # UCI's numeric codes: the original silent-NaN bug
+    ])
+    def test_encode_weather_rejects_unknown_labels(labels):
+        """The real CSV only has GOOD/MISTY/BAD, so nothing else exercises this
+        guard: seeded fault 3 (deleting the raise) left the whole suite green.
+        Lives in this file so the PostToolUse hook runs it."""
+>       with pytest.raises(ValueError, match="unmapped weather labels"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_leakage.py:101: Failed
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels0]
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels1]
+2 failed, 10 passed in 0.34s
+```
+
+`make test`:
+
+```
+tests/test_leakage.py:101: Failed
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels0]
+FAILED tests/test_leakage.py::test_encode_weather_rejects_unknown_labels[labels1]
+2 failed, 22 passed in 1.29s
+make: *** [test] Error 1
+```
+
+### Fault 4: tampered raw CSV (`rider_total` == `cnt`) copied in with `python -c`
+
+```
+$ make data
+ValueError: data/raw/bike_daily.csv has changed (sha256 37e80cecb02595a3..., expected a6bed1577f6e4de5...). Raw data is immutable: restore it with `git checkout -- data/raw/`.
+make: *** [data] Error 1
+$ make test
+FAILED tests/test_contract.py::test_every_raw_column_is_classified - Assertio...
+FAILED tests/test_contract.py::test_raw_data_is_unmodified - AssertionError: ...
+FAILED tests/test_leakage.py::test_no_feature_restates_the_target - Assertion...
+3 failed, 21 passed in 1.20s
+```
+
 ## Fault 1: a forbidden column added to `feature_columns`
 
 Commits `9f7cf78` (red) and `0135151` (fix).
@@ -258,6 +442,175 @@ enters the model silently.
   hook on Bash that rejects commands mentioning `data/raw` (brittle: paths can
   be built at runtime); `chmod -w data/raw` (the strongest against the agent,
   but a filesystem setting is not in the repo, so a fresh clone loses it).
+
+### The fault 4 defence, as implemented (commit `ab1f4f0`)
+
+```diff
+diff --git a/src/config.py b/src/config.py
+index 3034c1e..4368c8e 100644
+--- a/src/config.py
++++ b/src/config.py
+@@ -51,6 +51,19 @@ REJECTED_COLS = {"cnt_lag_2"}
+ # What feature_columns() and the tests actually enforce.
+ FORBIDDEN = LEAKAGE_COLS | TIME_INDEX_COLS | UNVERIFIED_COLS | REJECTED_COLS
+ 
++# --- Every other raw column, classified so a new one cannot slip in -----
++# feature_columns() is a denylist: an unforeseen numeric column would enter
++# the model silently (seeded fault 4: a copy of cnt named `rider_total`
++# gave ridge R^2 0.9999 with every test green). So every raw column must be
++# named somewhere; tests/test_contract.py fails on any that is not.
++RAW_FEATURE_COLS = {"temp", "atemp", "hum", "windspeed"}    # used as-is
++RAW_SOURCE_COLS = {"dteday", "holiday", "workday", "weather"}  # encoded in features.py
++RAW_UNUSED_COLS = {"season", "mnth", "weekday"}  # string labels; month_sin/cos, dayofweek replace them
++
++# sha256 of the checked-in data/raw/bike_daily.csv. Raw data is immutable;
++# `make data` and tests/test_contract.py both fail if the file changes.
++RAW_SHA256 = "a6bed1577f6e4de56dcfae6d8315985073cc0ad3446c8c99ed60c86a0b5ad9dc"
++
+ # Temporal split: train on 2011, validate on H1 2012, test on H2 2012.
+ TRAIN_END = "2011-12-31"
+ VALID_END = "2012-06-30"
+diff --git a/src/ingest.py b/src/ingest.py
+index 6654075..e97a50d 100644
+--- a/src/ingest.py
++++ b/src/ingest.py
+@@ -2,12 +2,13 @@
+ 
+ Run: python -m src.ingest
+ """
++import hashlib
+ import sys
+ import urllib.request
+ 
+ import pandas as pd
+ 
+-from src.config import DATA_URL, RAW
++from src.config import DATA_URL, RAW, RAW_SHA256
+ 
+ EXPECTED_MIN_ROWS = 700
+ REQUIRED_COLS = {"dteday", "cnt", "casual", "registered", "temp", "hum", "windspeed"}
+@@ -20,6 +21,25 @@ def download(force: bool = False) -> None:
+     urllib.request.urlretrieve(DATA_URL, RAW)
+ 
+ 
++def raw_sha256() -> str:
++    return hashlib.sha256(RAW.read_bytes()).hexdigest()
++
++
++def verify_raw() -> None:
++    """Fail if data/raw/bike_daily.csv is not the checked-in file.
++
++    The deny rules in .claude/settings.json bind the Edit/Write tools and
++    plain `cp`, but not a write from inside `python -c`, and the
++    PostToolUse hook only watches src/. This check binds the file itself.
++    """
++    actual = raw_sha256()
++    if actual != RAW_SHA256:
++        raise ValueError(
++            f"{RAW} has changed (sha256 {actual[:16]}..., expected {RAW_SHA256[:16]}...). "
++            "Raw data is immutable: restore it with `git checkout -- data/raw/`."
++        )
++
++
+ def load_raw() -> pd.DataFrame:
+     df = pd.read_csv(RAW, parse_dates=["dteday"])
+     missing = REQUIRED_COLS - set(df.columns)
+@@ -32,5 +52,6 @@ def load_raw() -> pd.DataFrame:
+ 
+ if __name__ == "__main__":
+     download(force="--force" in sys.argv)
++    verify_raw()
+     df = load_raw()
+-    print(f"OK ingest: {len(df)} rows, {df.dteday.min().date()} -> {df.dteday.max().date()}")
++    print(f"OK ingest: {len(df)} rows, {df.dteday.min().date()} -> {df.dteday.max().date()}, sha256 ok")
+diff --git a/tests/test_contract.py b/tests/test_contract.py
+index 4f7a1b8..29f1b28 100644
+--- a/tests/test_contract.py
++++ b/tests/test_contract.py
+@@ -3,9 +3,17 @@ import pandas as pd
+ import pytest
+ from sklearn.metrics import r2_score
+ 
+-from src.config import LAG_WARMUP, TARGET
++from src.config import (
++    FORBIDDEN,
++    LAG_WARMUP,
++    RAW_FEATURE_COLS,
++    RAW_SHA256,
++    RAW_SOURCE_COLS,
++    RAW_UNUSED_COLS,
++    TARGET,
++)
+ from src.features import build_features, feature_columns, reindex_to_calendar
+-from src.ingest import load_raw
++from src.ingest import load_raw, raw_sha256
+ from src.train import MODELS, temporal_split
+ 
+ 
+@@ -56,3 +64,21 @@ def test_persistence_baseline_is_reported():
+     """The baseline that matters for a lag-driven model is 'yesterday again'.
+     It must be in the comparison, whatever its score."""
+     assert "baseline_persistence" in MODELS
++
++
++def test_every_raw_column_is_classified(raw):
++    """feature_columns() is a denylist, so a new numeric column in the raw
++    CSV would enter the model silently. Every raw column must be named in
++    src/config.py: forbidden (with a reason), a raw feature, a source that
++    features.py encodes, or explicitly unused."""
++    classified = FORBIDDEN | RAW_FEATURE_COLS | RAW_SOURCE_COLS | RAW_UNUSED_COLS
++    unclassified = set(raw.columns) - classified
++    assert not unclassified, (
++        f"raw columns not classified in src/config.py: {sorted(unclassified)}"
++    )
++
++
++def test_raw_data_is_unmodified():
++    """Raw data is immutable. The permission rules bind the agent's Edit and
++    Write tools, not every way a shell can write a file (seeded fault 4)."""
++    assert raw_sha256() == RAW_SHA256, "data/raw/bike_daily.csv has been modified"
+diff --git a/tests/test_leakage.py b/tests/test_leakage.py
+index 50bca14..9662367 100644
+--- a/tests/test_leakage.py
++++ b/tests/test_leakage.py
+@@ -4,6 +4,9 @@ test_no_forbidden_features is the single most valuable test in this repo:
+ casual + registered == cnt exactly, so any model handed those columns
+ scores R^2 = 1.0 and looks brilliant while having learned nothing.
+ """
++from itertools import combinations
++
++import numpy as np
+ import pandas as pd
+ import pytest
+ 
+@@ -31,6 +34,26 @@ def test_no_forbidden_features(feats):
+     assert not (cols & FORBIDDEN), f"forbidden columns in feature set: {cols & FORBIDDEN}"
+ 
+ 
++def test_no_feature_restates_the_target(feats):
++    """Checks values, not names. test_no_forbidden_features only sees names
++    in FORBIDDEN, so `casual` renamed to something innocent would pass it.
++    Here every feature, and every pair of features, is fit against cnt,
++    casual and registered by least squares with an intercept; an exact fit
++    (max residual < 1e-6) is a restatement of the target."""
++    cols = feature_columns(feats)
++    hits = []
++    for target in ("cnt", "casual", "registered"):
++        y = feats[target].to_numpy(dtype=float)
++        for r in (1, 2):
++            for subset in combinations(cols, r):
++                X = np.column_stack([feats[list(subset)].to_numpy(dtype=float),
++                                     np.ones(len(feats))])
++                coef, *_ = np.linalg.lstsq(X, y, rcond=None)
++                if np.abs(X @ coef - y).max() < 1e-6:
++                    hits.append((target, subset))
++    assert not hits, f"features that exactly restate a leaked column: {hits}"
++
++
+ def test_lags_are_true_calendar_lags(feats):
+     """cnt_lag_1 for date d must equal cnt on d-1, in calendar days."""
+     by_date = feats.set_index("dteday")[TARGET]
+```
 
 Re-running fault 4 against the defences:
 
