@@ -1,16 +1,19 @@
-# Forecasting daily bikeshare demand: report
+# Forecasting daily bikeshare demand
 
-Reproduce every number here with `make all` (pipeline), `make test`
-(24 tests), `python -m src.train --target-transform` (Exercise 4,
-validation), and `python -m src.diagnostics` (Exercise 5).
+To reproduce the numbers below: `make all` runs the pipeline, `make test`
+runs the 24 tests, `python -m src.train --target-transform` gives the
+Exercise 4 validation results, and `python -m src.diagnostics` gives the
+Exercise 5 numbers.
 
 ## Results
 
-Train = 2011 (348 days), validation = H1 2012 (182), test = H2 2012 (184),
-split by date (`src.train.temporal_split`). R² is computed against each
-split's own mean, so 0 means "as good as a constant nobody could know in
-advance". Eight rows: the four entries of `reports/metrics.json`, without
-and with the feature I added in Exercise 1 (`cnt_lag_2`).
+I train on 2011 (348 days), validate on the first half of 2012 (182 days)
+and test on the second half (184 days), splitting by date with
+`src.train.temporal_split`. R² is measured against each split's own mean, so
+0 is what you'd get from predicting a constant you couldn't have known
+ahead of time. The table has the four entries from `reports/metrics.json`,
+first without and then with the feature I added in Exercise 1
+(`cnt_lag_2`).
 
 | Model | Features | Valid R² | Valid MAE | Test R² | Test MAE |
 |---|---|---|---|---|---|
@@ -23,53 +26,59 @@ and with the feature I added in Exercise 1 (`cnt_lag_2`).
 | ridge | with `cnt_lag_2` (15) | 0.6453 | 833.4 | 0.583 | 945.5 |
 | hgb | with `cnt_lag_2` (15) | 0.2481 | 1269.8 | -0.4737 | 1947.9 |
 
-The "before" rows are the committed `reports/metrics.json`, which `make all`
-reproduces exactly; I rejected the feature (below), so the final pipeline
-is the "before" pipeline. The "with" rows are `reports/metrics.json` as
-committed in `ec1f189`, the commit that added the feature. The test columns
-of the "with" rows were not read until the keep/reject decision had been
-made on validation and committed (`da7bd6d`).
+The "before" rows are the committed `reports/metrics.json`, and `make all`
+reproduces them exactly. I ended up rejecting the feature (see below), so the
+final pipeline is the "before" one. The "with" rows come from
+`reports/metrics.json` as it was in commit `ec1f189`, where I added the
+feature. I didn't look at the test columns of those rows until after I'd
+decided on validation to reject it (`da7bd6d`).
 
-For contrast, the naive model of Step 3 (`python -m src.leakage_demo`:
-linear regression on `casual`, `registered`, `temp`, `hum`) scores test
-R² = 1.000000.
+For comparison, the naive model from Step 3 (`python -m src.leakage_demo`,
+a linear regression on `casual`, `registered`, `temp` and `hum`) gets a test
+R² of 1.000000.
 
 ## Headline finding
 
-The naive evaluation gives R² = 1.000 and is invalid: `casual + registered
-== cnt` on every row, so that model learned addition. Under a temporal split
-with the leaked columns removed, the mean baseline scores test R² -2.14
-(ridership grew, so the 2011 average is far below every late-2012 day), ridge
-reaches 0.583 against a persistence baseline of 0.510, and ridge loses to
-persistence on MAE (947 vs 840 rides). Gradient boosting falls to -0.50 on
-test while still beating the mean baseline, because a tree cannot predict
-above the largest target it saw: the 2011 maximum is 6,043 rides, 56.5% of
-test days are above it (39.0% of validation days), and the booster's
-largest test prediction is 5,537. My Exercise 1 feature, `cnt_lag_2` (rides
-two calendar days earlier, calendar-aligned and tested), changed ridge
-validation R² by -0.0022 and hgb by +0.0296; under a keep-rule fixed before
-measuring (ridge validation gain >= 0.01) I rejected it, so it stays built
-and tested but out of the model (`REJECTED_COLS` in `src/config.py`).
+The naive R² of 1.000 is meaningless. `casual + registered` equals `cnt` on
+every row, so that model just learned to add. Once those columns are gone and
+the split is by date, the mean baseline gets a test R² of -2.14, because
+ridership grew and the 2011 average is far below every day in late 2012.
+Ridge gets 0.583. Persistence (predicting yesterday's count) gets 0.510, and
+it actually beats ridge on MAE, 840 rides against 947. Gradient boosting
+drops to -0.50 on test, though it still beats the mean baseline. The reason
+is that a tree can't predict anything higher than the largest value it was
+trained on. The 2011 maximum was 6,043 rides, 56.5% of test days are above
+that (39.0% of validation days), and the booster never predicts more than
+5,537 on test.
 
-Two findings from breaking the pipeline on purpose (`docs/SEEDED_FAULTS.md`)
-change how far the starter's guarantees reach. Removing the weather
-encoder's `raise` left the whole suite green, because nothing exercised it;
-and overwriting the raw CSV with one extra column, a copy of `cnt` named
-`rider_total`, gave ridge validation R² 0.9999 with every stage printing OK
-and all 18 tests then in the suite passing. Both now fail loudly: a unit test
-for the encoder, a raw-data hash check, a test that every raw column is
-classified, and a least-squares test that no feature restates the target.
+My Exercise 1 feature was `cnt_lag_2`, the ride count from two calendar days
+earlier, built on the gap-free calendar and tested. It moved ridge's
+validation R² by -0.0022 and hgb's by +0.0296. I'd set a rule before
+measuring that a feature only stays if ridge improves by at least 0.01 on
+validation, so I dropped it. It's still built and tested but kept out of the
+model through `REJECTED_COLS` in `src/config.py`.
+
+Breaking the pipeline on purpose (`docs/SEEDED_FAULTS.md`) showed two gaps
+in the starter's checks. When I removed the `raise` from the weather
+encoder, every test still passed, because nothing ever tested it. When I
+overwrote the raw CSV with a version that had one extra column (a copy of
+`cnt` called `rider_total`), ridge hit a validation R² of 0.9999, every
+stage printed OK, and all 18 tests in the suite at that point passed. Both
+of these fail now. I added a unit test for the encoder, a hash check on the
+raw data, a test that every raw column is listed in the config, and a
+least-squares test that no feature is a restatement of the target.
 
 ## Exercise 4: target transformation
 
-The question was whether a transformation of the target lets the tree
-compete. Three candidates were fixed before running anything, each applied
-to ridge and hgb through `RelativeTarget` in `src/train.py` (behind
-`--target-transform`; `make all` is unaffected): the ratio to the previous
-7-day mean (`cnt / cnt_roll_7`), the difference from yesterday
-(`cnt - cnt_lag_1`), and `log1p(cnt)` as a control that rescales without
-removing the trend. Every reference column is lagged, so nothing from day d
-enters. Validation only (`reports/exercise4_valid.json`):
+The question here was whether changing the target would let the tree model
+compete. Before running anything I picked three options: the ratio to the
+previous 7-day mean (`cnt / cnt_roll_7`), the difference from yesterday
+(`cnt - cnt_lag_1`), and `log1p(cnt)`. The log one was meant as a control,
+since it rescales the target but doesn't take out the trend. I applied each
+one to both ridge and hgb using `RelativeTarget` in `src/train.py`, behind
+the `--target-transform` flag so `make all` isn't affected. All the
+reference columns are lagged, so nothing from day d gets in. These are
+validation numbers only (`reports/exercise4_valid.json`):
 
 | Target | ridge valid R² | hgb valid R² | hgb max prediction |
 |---|---|---|---|
@@ -78,149 +87,162 @@ enters. Validation only (`reports/exercise4_valid.json`):
 | cnt - cnt_lag_1 | 0.6475 | 0.6079 | 8,307 |
 | log1p(cnt) | 0.1042 | 0.1352 | 5,556 |
 
-Baselines on validation: persistence 0.4507, mean -0.9318. The ratio lets
-the tree predict above the 2011 ceiling (8,222 against 6,043), because it
-now predicts a multiplier on a level that already carries the growth. The
-log control does not fix it (max 5,556), which supports that mechanism over
-"any transform helps". The same ratio hurts ridge, which already
-extrapolated through its lag coefficients.
+For reference, persistence gets 0.4507 on validation and the mean baseline
+gets -0.9318. With the ratio target the tree can finally predict above the
+2011 ceiling (8,222 compared to 6,043). It's now predicting a multiplier,
+and the level it multiplies already includes the growth. The log version
+doesn't help (its max is 5,556), so it isn't just that any transformation
+helps. The ratio actually makes ridge worse, which makes sense since ridge
+could already extrapolate through its lag coefficients.
 
-I chose hgb with the ratio target on validation and touched the test set
-once for it (`bb00f5d`, `reports/exercise4_test.json`): **test R² 0.6416,
-MAE 810.1**, against ridge 0.5833 / 947.1, persistence 0.5099 / 840.1 and
-mean -2.1441 / 2847.7. It is the only model in this repo that beats
-persistence on both test metrics, though on MAE only by 30 rides a day.
-(Adding the baselines to that file later, after an audit finding, re-read
-the test split; the model rows were byte-identical.)
+I picked hgb with the ratio target based on validation and then ran it on
+the test set once (`bb00f5d`, `reports/exercise4_test.json`). It got a test
+R² of 0.6416 and an MAE of 810.1. Ridge has 0.5833 / 947.1, persistence
+0.5099 / 840.1 and the mean baseline -2.1441 / 2847.7. That makes it the only
+model in the repo that beats persistence on both test metrics, but on MAE
+it's only by 30 rides a day. (Later an audit pointed out the baselines were
+missing from that file. Adding them meant reading the test split again, but
+the model rows came out byte-for-byte the same.)
 
-**Is it defensible?** I judge it defensible, not a way to win the
-comparison. The reference is known at prediction time; detrending by a
-recent level is a standard way to make a model that cannot extrapolate
-handle a trend; the candidates were fixed in advance and chosen on
-validation; and the result holds where I did not select it: on test, and in
-both halves of validation (Q1 2012: 0.582 vs ridge 0.562; Q2: 0.488 vs
-0.093). The caveat that keeps it out of the headline: picking 1 of 6
-model-transform pairs on 182 validation days is mild selection, and ridge
-was not offered its best transform (the difference target ties its
-untransformed score). The committed `reports/metrics.json` remains the
-untransformed pipeline.
+I think the transformation is defensible and not just a trick to win the
+comparison. The reference value is known at prediction time, and dividing
+out a recent level is a normal way to deal with a trend when your model
+can't extrapolate. I chose the candidates beforehand and picked on
+validation. It also holds up on data I didn't select on: on test, and in
+both halves of validation (Q1 2012: 0.582 vs ridge's 0.562, Q2: 0.488 vs
+0.093). The caveat is that choosing 1 out of 6 model and transform pairs on
+182 days is still some selection, and I didn't give ridge its best
+transform (the difference target ties its untransformed score). So I'm not
+putting it in the headline. The committed `reports/metrics.json` is still
+the untransformed pipeline.
 
 ## Exercise 5: ridge vs persistence
 
-Ridge is **not** worth deploying over "yesterday again" as it stands. Its
-test R² is higher (0.583 vs 0.510), but R² is driven by a minority of large
-misses; on a typical day ridge is worse: it is closer than persistence on
-only 38.6% of test days, its median absolute error is 904 rides against
-506, and its MAE is 947 against 840. The reason is a level bias, not noise:
-ridge under-predicts by 555 rides a day on average on test (persistence: +16),
-because its intercept and coefficients were fit on 2011's lower level
-(`ridge_coef_per_sd`: `cnt_roll_7` +567, `cnt_lag_1` +362 rides per standard
-deviation, then weather severity -280 and temperature +200; ridge is mostly
-"recent demand, scaled down, corrected for weather"). Where ridge does add
-something is on days whose change can be known in advance: when the weather
-category changed from yesterday it beats persistence (MAE 1048 vs 1141,
-n = 67); when workday status changed it roughly ties (1010 vs 1027, n = 59);
-when neither changed it loses badly (860 vs 582, n = 81). Removing the four
-days around Hurricane Sandy does not change the ranking (MAE 915 vs 784). So
-the useful part of ridge is its weather and calendar response, and the
-harmful part is the stale level. A deployable model has to fix the level
-first; the detrended booster of Exercise 4 does that (bias -283) and beats
-persistence on both metrics, but it was chosen after one look at test and
-should be confirmed on 2013 data before anyone relies on it.
+I don't think ridge is worth deploying over "yesterday again" as it is. It
+does have the higher test R² (0.583 vs 0.510), but R² is mostly driven by a
+few large misses, and on an ordinary day ridge does worse. It's closer than
+persistence on only 38.6% of test days. Its median absolute error is 904
+rides against 506, and its MAE is 947 against 840. That isn't noise; the
+problem is the level. Ridge under-predicts by 555 rides a day on average on
+test (persistence is off by +16), because it was fit on 2011, when ridership
+was lower. Looking at the coefficients (`ridge_coef_per_sd`, in rides per
+standard deviation), `cnt_roll_7` is +567 and `cnt_lag_1` is +362, followed
+by weather severity at -280 and temperature at +200. So ridge is mostly
+"recent demand, scaled down, adjusted for weather".
 
-(An earlier draft supported this paragraph with a slice of "big-move days",
-defined as |cnt - cnt_lag_1| > 1000. The leakage-auditor pointed out that
-this is persistence's own error, so ridge winning there was guaranteed; the
-slice is now labelled outcome-selected in `src/diagnostics.py` and the
-argument above uses only slices knowable in advance. See `docs/AUDIT.md`.)
+Ridge does help on days where you could see the change coming. When the
+weather category is different from yesterday's, it beats persistence (MAE
+1048 vs 1141, n = 67). When workday status changes, the two are about even
+(1010 vs 1027, n = 59). When neither changes, ridge loses by a lot (860 vs
+582, n = 81). Taking out the four days around Hurricane Sandy doesn't change
+the ranking (MAE 915 vs 784). So what's useful in ridge is how it responds
+to weather and the calendar, and what hurts is the outdated level. A model
+you'd actually deploy needs to fix the level first. The detrended booster
+from Exercise 4 does that (bias -283) and beats persistence on both metrics.
+But I picked it after one look at test, so it would need to be checked on
+2013 data before anyone relied on it.
+
+My first draft of this section used a slice of "big-move days", defined as
+|cnt - cnt_lag_1| > 1000. The leakage-auditor caught that this is exactly
+persistence's error, so ridge was guaranteed to win on those days. I
+relabelled that slice as outcome-selected in `src/diagnostics.py` and
+rewrote the argument using only slices you can know in advance (see
+`docs/AUDIT.md`).
 
 ## Attribution
 
-**Model:** this repository was produced in Claude Code 2.1.332 driving
-hosted Anthropic models, not the local open-weight model the lesson
-defaults to. The plan was written on **Claude Fable 5.2**; I then switched
-the session to **Claude Opus 5.5**, which did all execution, including every
-nested headless `claude -p` session (feature, seeded faults and fixes,
-`/leakage-auditor`) and both `agent/audit.py` runs
-(`AUDIT_MODEL=claude-opus-5-5`). The local `bikeshare-coder` (qwen3.5:9b
-via Ollama, 64k context) was used only for the comparison below. One
-limitation to be clear about: the main session ran from the directory
-above this repo, so the project's PostToolUse hook did not fire on the
-code it wrote directly (the tests, `config.py`, `ingest.py`, `train.py`,
-`diagnostics.py`); it ran `make test` after each change instead. The hook
-was live, and is evidenced firing, in every nested session that edited
-`src/`: the feature, the seeded faults and their fixes.
+**Model:** I did this assignment in Claude Code 2.1.332 using hosted
+Anthropic models, not the local open-weight model the lesson uses by
+default. I wrote the plan with **Claude Fable 5.2** and then switched the
+session to **Claude Opus 5.5**, which did everything after that. That
+includes every nested headless `claude -p` session (the feature, the seeded
+faults and their fixes, `/leakage-auditor`) and both `agent/audit.py` runs
+(`AUDIT_MODEL=claude-opus-5-5`). I only used the local `bikeshare-coder`
+(qwen3.5:9b through Ollama, 64k context) for the comparison at the end.
 
-**Generated by the agent** (all reviewed, run and checked against printed
-numbers before committing):
+One limitation: the main session was running from the folder above this
+repo, so the project's PostToolUse hook didn't fire on code it wrote
+directly (the tests, `config.py`, `ingest.py`, `train.py`,
+`diagnostics.py`). It ran `make test` after each change instead. The hook
+was working in every nested session that edited `src/` (the feature, the
+seeded faults and their fixes), and the logs show it firing.
+
+**What the agent generated.** I reviewed and ran all of it, and checked it
+against printed numbers before committing:
 - `tests/test_leakage.py`: `test_lag_2_is_two_calendar_days_back` and
-  `test_lag_2_is_true_calendar_lag_everywhere` (nested `/new-feature` runs;
-  the agent cited the wrong CSV line for the expected value, corrected by
-  hand), `test_encode_weather_rejects_unknown_labels`,
+  `test_lag_2_is_true_calendar_lag_everywhere` (from nested `/new-feature`
+  runs; the agent cited the wrong CSV line for the expected value, which I
+  corrected), `test_encode_weather_rejects_unknown_labels`, and
   `test_no_feature_restates_the_target`.
 - `tests/test_contract.py`: `test_every_raw_column_is_classified`,
   `test_raw_data_is_unmodified`, `test_target_transforms_round_trip`, and
-  the validation-based rewrite of `test_beats_the_mean_baseline`.
-- `src/features.py`: `cnt_lag_2`; the fixes for seeded faults 1-3 (each by a
-  fresh session; the fault 3 fix also hardened the error message).
-- `src/config.py`: `REJECTED_COLS`, `RAW_*_COLS`, `RAW_SHA256`;
-  `src/ingest.py`: `verify_raw`; `src/train.py`: `RelativeTarget`,
-  `TRANSFORMS`, `score_transforms`, the `--target-transform` flag;
-  `src/diagnostics.py`; the `Makefile` fix for `make model`.
-- `.claude/skills/seed-fault/SKILL.md`; `docs/SEEDED_FAULTS.md`,
+  the rewrite of `test_beats_the_mean_baseline` so it uses validation.
+- `src/features.py`: `cnt_lag_2`, and the fixes for seeded faults 1-3, each
+  made by a fresh session. The fault 3 fix also made the error message
+  sturdier.
+- `src/config.py`: `REJECTED_COLS`, `RAW_*_COLS`, `RAW_SHA256`.
+  `src/ingest.py`: `verify_raw`. `src/train.py`: `RelativeTarget`,
+  `TRANSFORMS`, `score_transforms`, and the `--target-transform` flag. Also
+  `src/diagnostics.py` and the `Makefile` fix for `make model`.
+- `.claude/skills/seed-fault/SKILL.md`, `docs/SEEDED_FAULTS.md`,
   `docs/AUDIT.md`, the dated lines in `docs/DECISIONS.md`, this report, and
-  the `CLAUDE.md` edits, all drafted by the agent; the decisions they record
-  are listed below.
+  the `CLAUDE.md` edits. The agent drafted all of these; the decisions they
+  record are listed below.
 
-**Decisions that were mine** (each traces to a line in `docs/DECISIONS.md`):
-- What to predict (`cnt`, daily), what counts as leakage (`casual`,
-  `registered`, and any column that restates them), how to split
-  (2011 / H1 2012 / H2 2012), and which baselines (mean and persistence):
-  adopted from the starter, recorded in its five lines.
+**Decisions that were mine** (each one has a line in `docs/DECISIONS.md`):
+- What to predict (daily `cnt`), what counts as leakage (`casual`,
+  `registered`, and any column that restates them), how to split (2011 /
+  H1 2012 / H2 2012) and which baselines to use (mean and persistence). I
+  kept these from the starter, where they're the first five lines.
 - Which model ran the agent (hosted, named above).
-- Which feature to try (`cnt_lag_2`), and the rule for keeping it, fixed
-  before measuring; rejecting it followed from that rule.
-- That the Exercise 4 transformation is defensible, with the stated caveat.
-- That ridge is not worth deploying over persistence as it stands.
-- Whether the answer is believable: I accept the headline (the leaky 1.000 is
-  invalid; ridge is a modest 0.07 R² over persistence and worse on MAE; the
-  tree fails because it cannot extrapolate), because every part of it is a
-  printed number that `make all` and `python -m src.diagnostics` reproduce.
+- Which feature to try (`cnt_lag_2`), and the rule for keeping it, which I
+  set before measuring. Rejecting it followed from that rule.
+- That the Exercise 4 transformation is defensible, with the caveat above.
+- That ridge isn't worth deploying over persistence as it is.
+- Whether the result is believable. I accept the headline (the leaky 1.000
+  is invalid, ridge is only 0.07 R² better than persistence and worse on
+  MAE, and the tree fails because it can't extrapolate), because every part
+  of it is a printed number that `make all` and `python -m src.diagnostics`
+  reproduce.
 
-The Exercise 4 and 5 verdicts were mine, chosen from options the agent laid
-out with the numbers and a recommendation; I took its recommendation in
-both cases. Where an auditor contradicted the agent (`docs/AUDIT.md`), the
-correction was made and recorded rather than argued away, with one
-exception: `agent/audit.py` flagged a starter line in DECISIONS.md for
-quoting ridge's 0.583 without a baseline beside it. That line is unchanged
-because the assignment requires the five starter lines kept as shipped; the
-baselines are on the starter's own line 10 and beside every score in this
+For the Exercise 4 and 5 verdicts, the agent laid out the options with the
+numbers and a recommendation, and I picked one. In both cases I went with
+its recommendation. When an auditor disagreed with the agent's work
+(`docs/AUDIT.md`), I made the correction and recorded it. The one exception
+is that `agent/audit.py` flagged a starter line in DECISIONS.md for quoting
+ridge's 0.583 without a baseline next to it. I left that line alone because
+the assignment says to keep the five starter lines as they were. The
+baselines are in the starter's own line 10, and next to every score in this
 report.
 
 ### Changing the model, not the method (Exercise 6)
 
 I gave both models the same two prompts, each in a fresh clone of the
-**unmodified starter** with its `CLAUDE.md`: the Step 3 prompt ("Build a
-model to predict cnt from the other columns. Report R-squared.") and the
-Step 6 question *without* the "show me the evidence, compare the range"
-clause, to see whether the evidence comes unasked. Claude Opus 5.5 (hosted)
-finished both in under two minutes (30 s and 85 s). On Step 3 it did not
-take the bait: it read `CLAUDE.md` and `src/config.py`, ran `make all` and
-`make test`, said it had excluded `casual`/`registered` because they sum to
-`cnt`, and reported ridge's 0.583 beside both baselines and the
-"0.07 R² over persistence, worse MAE" caveat, all unprompted. So on a
-strong model with `CLAUDE.md` loaded, the naive question no longer produces
-the R² = 1.000 the lesson relies on; the trap only springs if the standing
-rules are absent. On Step 6 it refit the models and printed the per-split
-target range and each model's maximum prediction (hgb capped near 5,540
-against a test maximum of 8,714) without being asked. The local
-`bikeshare-coder` (qwen3.5:9b, 64k context, on an 18 GB laptop) made five
-tool calls in about nine minutes, all exploring the CSV, one of them a Read
-on a wrong absolute path (`~/data/raw/...`) that it then corrected, and had
-produced no model and no number when I stopped it. It never reached the
-Step 6 question. I have no evidence on whether it would have found the
-identity or used the leaked columns, so I make no claim about that. The
-hook did not fire in either run, because neither edited `src/`. The
-methodology was the same in both runs; the difference was the model, and
-with this setup the 9B model could not finish the first prompt in the time
-I allowed.
+unmodified starter with its `CLAUDE.md`. The first was the Step 3 prompt
+("Build a model to predict cnt from the other columns. Report R-squared.").
+The second was the Step 6 question with the "show me the evidence, compare
+the range" part removed, to see if the model would show the evidence
+without being asked.
+
+Claude Opus 5.5 (hosted) finished both in under two minutes (30 s and
+85 s). On Step 3 it didn't fall for the trap. It read `CLAUDE.md` and
+`src/config.py`, ran `make all` and `make test`, said it had left out
+`casual` and `registered` because they add up to `cnt`, and reported ridge's
+0.583 next to both baselines along with the "0.07 R² over persistence,
+worse MAE" caveat, all without being asked. So with a strong model and
+`CLAUDE.md` loaded, the naive question doesn't produce the R² = 1.000 the
+lesson is built around. That only happens if the standing rules aren't
+there. On Step 6 it refit the models and printed the target range for each
+split and each model's largest prediction (hgb tops out around 5,540 while
+the test maximum is 8,714), again without being asked.
+
+The local `bikeshare-coder` (qwen3.5:9b, 64k context, on an 18 GB laptop)
+made five tool calls in about nine minutes. All of them were just looking at
+the CSV, and one was a Read on a wrong absolute path (`~/data/raw/...`) that
+it fixed on the next call. It still hadn't built a model or produced a
+number when I stopped it, and it never got to the Step 6 question. I don't
+know whether it would have found the identity or used the leaked columns, so
+I'm not claiming anything about that. The hook didn't fire in either run,
+because neither one edited `src/`. The method was the same both times and
+only the model changed, and with this setup the 9B model couldn't get
+through the first prompt in the time I gave it.
